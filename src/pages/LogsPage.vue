@@ -162,6 +162,17 @@
               >
                 <div class="row no-wrap">
                   <q-card
+                    dark
+                    class="my-card q-mr-md"
+                    style="width: 256px"
+                  >
+                    <img v-if="encounter.image" :src="encounter.image" />
+
+                    <q-card-section>
+                      <div class="text-subtitle2">DPS</div>
+                    </q-card-section>
+                  </q-card>
+                  <q-card
                     v-for="(attempt, index) in encounter.attempts"
                     :key="attempt.startingMs"
                     dark
@@ -169,11 +180,9 @@
                     style="width: 256px"
                     @click="onEncounterClick(attempt)"
                   >
-                    <img v-if="encounter.image" :src="encounter.image" />
-
                     <q-card-section>
                       <div class="text-h6">Attempt {{ index + 1 }}</div>
-                      <div class="text-subtitle2">{{ attempt.duration }}</div>
+                      <div class="text-subtitle2" style="display: flex;align-items: flex-start" :key="player.name" v-for="(player) in attempt.players"><img width="16" height="16" :src="getClassImage(player.classId)" />{{player.name}}</div>
                     </q-card-section>
                   </q-card>
                 </div>
@@ -200,10 +209,11 @@ import { ref, reactive, onMounted } from "vue";
 import dayjs from "dayjs";
 import {
   millisToMinutesAndSeconds,
-  millisToHourMinuteSeconds
+  millisToHourMinuteSeconds, abbreviateNumber
 } from "src/util/number-helpers";
 
 import LogView from "src/components/LogView.vue";
+import PCData from "app/meter-data/databases/PCData.json";
 
 import { useSettingsStore } from "src/stores/settings";
 import { Encounter, useLogViewerStore } from "src/stores/log-viewer";
@@ -226,6 +236,10 @@ const scrollArea = ref(null);
 function changeLogViewerStoreState(newState: any) {
   logViewerStore.viewerState = newState;
   if (scrollArea.value) scrollArea.value.setScrollPosition("vertical", 0);
+}
+function abbrNumber(v) {
+  const a = abbreviateNumber(v)
+  return `${a[0]}${a[1]}`
 }
 
 /*
@@ -276,18 +290,21 @@ function calculateEncounters(encounters: Encounter[]) {
     //   return;
     // }
 
+    const players = Array.from(encounter.players).sort((a,b)=>a.name.localeCompare(b.name))
 
     // const {image} = Object.values(encounters).find((e) => e.encounterNames.includes(encounter.encounterName)) ?? {}
-    const image = "";
+    const image = new URL('../assets/images/encounters/'+encounter.zone?.image, import.meta.url).href
     if (
       rows.length > 0 &&
-      rows[rows.length - 1].zone?.id === encounter.zone?.id
+      rows[rows.length - 1].zone?.id === encounter.zone?.id &&
+      rows[rows.length - 1].players.every((v,i)=>v.name===players[i]?.name)
     ) {
       rows[rows.length - 1].durationMs += encounter.durationMs;
       rows[rows.length - 1].attempts.push(encounter);
     } else {
       rows.push({
         ...encounter,
+        players,
         image,
         attempts: [encounter]
       });
@@ -369,6 +386,15 @@ async function wipeParsedLogs() {
 
   await sleep(1000);
   getLogfiles();
+}
+function getClassImage(classId) {
+  if (classId in PCData)
+    return new URL(
+      `../assets/images/classes/${classId}.png`,
+      import.meta.url
+    ).href;
+
+  return new URL("../assets/images/classes/101.png", import.meta.url).href;
 }
 </script>
 
