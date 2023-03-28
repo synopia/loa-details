@@ -2,11 +2,11 @@ import { AceBase } from "acebase";
 import { IpcMainEvent } from "electron";
 import { MeterData } from "meter-core/data";
 import fs, { promises as fsPromises } from "fs";
-import { mainFolder } from "app/src-electron/util/directories";
+import { mainFolder, parsedLogFolder } from "app/src-electron/util/directories";
 import log from "electron-log";
 import path from "path";
 import { LogParser } from "loa-details-log-parser";
-import { DamageSummary, Encounter } from "app/types";
+import { Encounter } from "app/types";
 import { Game } from "loa-details-log-parser/data";
 import { createEncounter } from "app/src-electron/log-parser/encounter";
 
@@ -41,6 +41,10 @@ async function fileParser(options: FileWorkerOptions): Promise<Game[]> {
   } catch (e) {
     return [];
   }
+}
+const encounterLogFolder = path.join(mainFolder, "encounter");
+if (!fs.existsSync(encounterLogFolder)) {
+  fs.mkdirSync(encounterLogFolder);
 }
 
 async function parseLogs(
@@ -88,8 +92,15 @@ async function parseLogs(
       meterData
     });
     for await (const game of result) {
-      const encounter = createEncounter(game)
+      const encounter = createEncounter(game, {
+        meterData,
+        minEncounterDuration:1.0,
+        maxIntervalCount: 100,
+        minIntervalSize: 1000,
+      })
       if( encounter ) {
+        const filename = path.join(encounterLogFolder, `${encounter.id}_${encounter.zone?.id ?? "unk"}.json`)
+        fs.writeFileSync(filename,JSON.stringify(encounter, (k,v)=>v, 2))
         await db.ref(`encounter/${encounter.id}`).set(encounter);
       }
     }
@@ -107,11 +118,16 @@ async function parseLogs(
 async function getEncounters(filter: string | null): Promise<Encounter[]> {
   const encounters: Encounter[] = [];
   await db.ready();
-  await db.query("encounter").take(5).forEach(enc => {
-    const game = enc.val() as Encounter;
+  // await db.indexes.create("encounter/*/zone/id", "{key}")
+  await db.query("encounter")
+    .filter("zone/name", "like", "Vykas*")
+    .sort("startingMs")
+    .take(5).forEach(enc => {
+    const game = enc.val();
     encounters.push(game)
   });
 
+  console.log(encounters)
   return encounters;
 }
 

@@ -1,183 +1,143 @@
 import { DataSnapshot } from "acebase";
 import { Entity, Game } from "loa-details-log-parser/data";
-import { DamageSummary, Encounter, HitSummary, PlayerSkill, PlayerState, StatusEffect } from "app/types";
+import {
+  Damage,
+  Encounter, EntityDamage,
+  SkillDamage,
+  TargetDamage, EncounterDamage
+} from "app/types";
 import log from "electron-log";
+import { MeterData } from "meter-core/data";
+
 import { randomUUID } from "crypto";
 import { findZone } from "app/src-electron/log-parser/zones";
 
 
-export function createEncounter(game: Game, includeBreakdown = false): Encounter | undefined {
-  const duration = game.lastCombatPacket - game.fightStartedOn;
+export const addUndefined = (one: number | undefined, two: number | undefined) =>
+  one !== undefined || two !== undefined ? (one ?? 0) + (two ?? 0) : undefined;
 
-  if (duration > 0) {
-    let players: Entity[] = [];
-    const enemies: Entity[] = [];
-    let wipe = true;
-    const debuffs: {[id: number]: StatusEffect} = Array.from(game.damageStatistics.debuffs.entries()).reduce((obj, k)=>{
-      obj[k[0]] = k[1]
-      return obj
-    }, {});
-    const buffs: {[id: number]: StatusEffect} = Array.from(game.damageStatistics.buffs.entries()).reduce((obj, k)=>{
-      obj[k[0]] = k[1]
-      return obj
-    }, {});
-    const damage : DamageSummary = {
-      damageDealt: 0,
-      damageDealtBuffedBySupport: 0,
-      damageDealtDebuffedBySupport: 0,
-      damageDealtBuffedBy: {},
-      damageDealtDebuffedBy: {}
-    }
-    const hits: HitSummary = {
-      casts: 0,
-      total: 0,
-      crit: 0,
-      backAttack: 0,
-      frontAttack: 0,
-      counter: 0,
-      hitsBuffedBySupport: 0,
-      hitsDebuffedBySupport: 0
-    }
-    game.entities.forEach((entity) => {
-      if (!entity.isPlayer) {
-        enemies.push(entity);
-      }
-      if (entity.isPlayer) {
-        players.push(entity);
-        damage.damageDealt += entity.damageDealt;
-        damage.damageDealtDebuffedBySupport += entity.damageDealtDebuffedBySupport
-        damage.damageDealtBuffedBySupport += entity.damageDealtBuffedBySupport
-        entity.damageDealtDebuffedBy.forEach((k,v)=>{
-          damage.damageDealtDebuffedBy[k] = (damage.damageDealtDebuffedBy[k] ?? 0) + v
-        })
-        entity.damageDealtBuffedBy.forEach((k,v)=>{
-          damage.damageDealtBuffedBy[k] = (damage.damageDealtBuffedBy[k]??0) + v
-        })
+export const scaleUndef = (one: number | undefined, duration: number) =>
+  one !== undefined ? Math.round(one / duration) : undefined;
 
-        hits.casts += entity.hits.casts
-        hits.total += entity.hits.total
-        hits.crit += entity.hits.crit
-        hits.backAttack += entity.hits.backAttack
-        hits.frontAttack += entity.hits.frontAttack
-        hits.counter += entity.hits.counter
-        hits.hitsDebuffedBySupport += entity.hits.hitsDebuffedBySupport
-        hits.hitsBuffedBySupport += entity.hits.hitsBuffedBySupport
-        if (!entity.isDead) {
-          wipe = false;
-        }
-      }
-    });
+export const addDamage = (one: Damage, two: Damage): Damage => ({
+  dps: one.dps + two.dps,
+  crit: addUndefined(one.crit, two.crit),
+  front: addUndefined(one.front, two.front),
+  back: addUndefined(one.back, two.back),
+  buffedBySupport: addUndefined(one.buffedBySupport, two.buffedBySupport),
+  debuffedBySupport: addUndefined(one.debuffedBySupport, two.debuffedBySupport)
+});
 
-    if (!enemies.length || !players.length) {
-      return;
-    }
-    enemies.sort((a, b) => b.lastUpdate - a.lastUpdate);
-    players.sort((a, b) => b.damageDealt - a.damageDealt);
-
-    const zone = findZone(enemies[0]);
-
-    if (zone) {
-      const enemyNames = enemies[0].id;
-      let encounterBars = enemies[0].currentHp / enemies[0].maxHp * 100;
-      encounterBars = encounterBars < 5 ? 0 : encounterBars;
-      players = players.filter(p => {
-        let hitEnemy = false;
-        p.skills.forEach(skill => {
-          if (skill.breakdown.find(b => enemyNames === b.targetEntity)) {
-            hitEnemy = true;
-          }
+function buildDamageTreeInside(one: Entity, two: Entity, start: number, end: number) {
+  return Array.from(one.skills.values()).reduce((sum: SkillDamage, skills) => {
+    const damage = skills.breakdown
+      .filter(b => b.timestamp >= start && b.timestamp < end)
+      .filter(b => b.targetEntity === two.id)
+      .reduce((sum: Damage, v) => {
+        return addDamage(sum, {
+          dps: v.damage,
+          crit: v.isCrit ? v.damage : undefined,
+          front: v.isFrontAttack ? v.damage : undefined,
+          back: v.isBackAttack ? v.damage : undefined,
+          buffedBySupport: v.isBuffedBySupport ? v.damage : undefined,
+          debuffedBySupport: v.isDebuffedBySupport ? v.damage : undefined
         });
-        return hitEnemy;
-      });
-      return {
-        id: randomUUID().replace("-", ""),
-        encounterName: zone.name,
-        encounterImage: zone.image,
-        encounterBars,
-        startingMs: game.startedOn,
-        durationMs: duration,
-        wipe,
-        players: players.map(p => ({
-          name: p.name,
-          class: p.class,
-          classId: p.classId,
-          gearScore: p.gearScore
-        })),
-        playerState: players.reduce((obj: { [name: string]: PlayerState }, p) => {
-          obj[p.name] = {
-            isDead: p.isDead,
-            deaths: p.deaths,
-            deathTime: p.deathTime,
-            damage: {
-              damageDealt: p.damageDealt,
-              damageDealtBuffedBySupport: p.damageDealtBuffedBySupport,
-              damageDealtDebuffedBySupport: p.damageDealtDebuffedBySupport,
-              damageDealtDebuffedBy: Array.from(p.damageDealtDebuffedBy.entries()).reduce((obj:any,entry)=>{
-                obj[entry[0]] = entry[1]
-                return obj
-              }, {}),
-              damageDealtBuffedBy: Array.from(p.damageDealtBuffedBy.entries()).reduce((obj:any,entry)=>{
-                obj[entry[0]] = entry[1]
-                return obj
-              }, {}),
-
-            },
-            hits: {
-              casts: p.hits.casts,
-              total: p.hits.total,
-              crit: p.hits.crit,
-              backAttack: p.hits.backAttack,
-              frontAttack: p.hits.frontAttack,
-              counter: p.hits.counter,
-              hitsDebuffedBySupport: p.hits.hitsDebuffedBySupport,
-              hitsBuffedBySupport: p.hits.hitsBuffedBySupport
-            },
-            skills: Array.from(p.skills.values()).reduce((obj:PlayerSkill, skill)=>{
-              obj[skill.id] = {
-                name: skill.name,
-                damage:{
-                  damageDealt: skill.damageDealt,
-                  damageDealtDebuffedBySupport: skill.damageDealtDebuffedBySupport,
-                  damageDealtBuffedBySupport: skill.damageDealtBuffedBySupport,
-                  damageDealtDebuffedBy: Array.from(skill.damageDealtDebuffedBy.entries()).reduce((obj:any,entry)=>{
-                    obj[entry[0]] = entry[1]
-                    return obj
-                  }, {}),
-                  damageDealtBuffedBy: Array.from(skill.damageDealtBuffedBy.entries()).reduce((obj:any,entry)=>{
-                    obj[entry[0]] = entry[1]
-                    return obj
-                  }, {}),
-                },
-                hits: {
-                  casts: skill.hits.casts,
-                  total: skill.hits.total,
-                  crit: skill.hits.crit,
-                  backAttack: skill.hits.backAttack,
-                  frontAttack: skill.hits.frontAttack,
-                  counter: skill.hits.counter,
-                  hitsDebuffedBySupport: skill.hits.hitsDebuffedBySupport,
-                  hitsBuffedBySupport: skill.hits.hitsBuffedBySupport
-                },
-                breakdown: includeBreakdown ? skill.breakdown.map(b=>({
-                  timestamp: b.timestamp,
-                  damage: b.damage,
-                  targetEntity: b.targetEntity,
-                  isCrit: b.isCrit,
-                  isBackAttack: b.isBackAttack,
-                  isFrontAttack: b.isFrontAttack,
-                  isBuffedBySupport: b.isBuffedBySupport,
-                  isDebuffedBySupport: b.isDebuffedBySupport,
-                  debuffedBy: b.debuffedBy,
-                  buffedBy: b.buffedBy
-                })) : undefined
-              }
-              return obj
-            }, {})
-          };
-          return obj;
-        }, {}),
-        damage, hits, debuffs, buffs
+      }, { dps: 0 });
+    const duration = (end - start) / 1000;
+    if (damage.dps > 0 && duration > 0) {
+      sum[skills.id] = {
+        dps: Math.round(damage.dps / duration),
+        crit: scaleUndef(damage.crit, duration),
+        front: scaleUndef(damage.front, duration),
+        back: scaleUndef(damage.back, duration),
+        buffedBySupport: scaleUndef(damage.buffedBySupport, duration),
+        debuffedBySupport: scaleUndef(damage.debuffedBySupport, duration)
       };
     }
+    return sum;
+  }, {});
+}
+
+function buildDamageTree(one: Entity[], two: Entity[], start: number, end: number) {
+  return one.reduce((encounter: EncounterDamage, left) => {
+    const out = two.reduce((target: TargetDamage, right) => {
+      const output = buildDamageTreeInside(left, right, start, end);
+      const input = buildDamageTreeInside(right, left, start, end);
+      const res: EntityDamage = {};
+      if (Object.keys(output).length > 0) {
+        res.out = {
+          total: Object.keys(output).reduce((s: Damage, v) => addDamage(s, output[v]), { dps: 0 }),
+          ...output
+        };
+      }
+      if (Object.keys(input).length > 0) {
+        res.in = {
+          total: Object.keys(input).reduce((s: Damage, v) => addDamage(s, input[v]), { dps: 0 }),
+          ...input
+        };
+      }
+      if (Object.keys(res).length > 0) {
+        target[right.id] = res;
+      }
+      return target;
+    }, {});
+    if (Object.keys(out).length > 0) {
+      const totalOut = Object.keys(out).reduce((sum: Damage, v) => addDamage(sum, out[v].out?.total ?? { dps: 0 }), { dps: 0 });
+      const totalIn = Object.keys(out).reduce((sum: Damage, v) => addDamage(sum, out[v].in?.total ?? { dps: 0 }), { dps: 0 });
+      out.totalOut = totalOut.dps > 0 ? totalOut : undefined;
+      out.totalIn = totalIn.dps > 0 ? totalIn : undefined;
+      encounter[left.id] = out;
+    }
+    return encounter;
+  }, {});
+}
+
+export interface CreateEncounterProps {
+  minIntervalSize: number,
+  maxIntervalCount: number
+  minEncounterDuration: number
+  meterData: MeterData
+}
+
+export function createEncounter(game: Game, props: CreateEncounterProps): Encounter | undefined {
+  const { minEncounterDuration = 1000, meterData } = props;
+  const duration = (game.lastCombatPacket - game.fightStartedOn);
+
+  if (duration > minEncounterDuration*1000) {
+    const entities = Array.from(game.entities.values()).filter(e => e.id && e.id !== "");
+    const enemies = entities.filter(e => !e.isPlayer);
+    const bosses = enemies.filter(e => {
+      const npc = meterData.npc.get(e.npcId);
+      return npc && ["boss", "raid", "epic_raid", "commander"].includes(npc.grade);
+    });
+    const players = entities.filter(e => e.isPlayer);
+    const damage = buildDamageTree(players, bosses, game.fightStartedOn, game.lastCombatPacket);
+
+    const zone = findZone(bosses);
+
+    return {
+      id: randomUUID(),
+      zone,
+      startingMs: game.startedOn,
+      durationMs: duration,
+      wipe: players.every(p => p.isDead),
+      players: players.map(p => ({
+        id: p.id,
+        name: p.name,
+        class: p.class,
+        classId: p.classId,
+        gearScore: p.gearScore,
+        deaths: p.deaths,
+        isDead: p.isDead
+      })),
+      enemies: bosses.map(e => ({
+        id: e.id,
+        npcId: e.npcId,
+        name: e.name,
+        deaths: e.deaths,
+        isDead: e.isDead
+      })),
+      damage
+    };
   }
 }

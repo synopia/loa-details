@@ -141,9 +141,9 @@
 
             <q-timeline-entry
               v-for="encounter in encounterRows"
-              :key="encounter.encounterName"
+              :key="encounter.zone?.name"
               :title="
-                encounter.encounterName +
+                encounter.zone?.name +
                 ' | ' +
                 encounter.attempts.length +
                 ' attempt(s)'
@@ -267,21 +267,21 @@ function calculateEncounters(encounters: Encounter[]) {
 
   logViewerStore.encounters.forEach((encounter) => {
 
-    if (
-      encounter.durationMs <=
-      settingsStore.settings.logs.minimumEncounterDurationInMinutes *
-      60 *
-      1000
-    ) {
-      return;
-    }
+    // if (
+    //   encounter.durationMs <=
+    //   settingsStore.settings.logs.minimumEncounterDurationInMinutes *
+    //   60 *
+    //   1000
+    // ) {
+    //   return;
+    // }
 
 
     // const {image} = Object.values(encounters).find((e) => e.encounterNames.includes(encounter.encounterName)) ?? {}
     const image = "";
     if (
       rows.length > 0 &&
-      rows[rows.length - 1].encounterName === encounter.encounterName
+      rows[rows.length - 1].zone?.id === encounter.zone?.id
     ) {
       rows[rows.length - 1].durationMs += encounter.durationMs;
       rows[rows.length - 1].attempts.push(encounter);

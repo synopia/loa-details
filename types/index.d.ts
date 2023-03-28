@@ -1,7 +1,6 @@
 import { Settings } from "app/src-electron/util/app-settings";
 import { ProgressInfo } from "electron-updater";
 import { Game } from "loa-details-log-parser";
-import { StatusEffectBuffTypeFlags } from "loa-details-log-parser/src/data";
 export type MessageEvent =
   | { message: "download-progress"; value: ProgressInfo }
   | {
@@ -50,88 +49,75 @@ export interface ParserStatus {
   completedJobs: number
   totalJobs: number
 }
-export interface DamageSummary {
-  damageDealt: number;
-  damageDealtDebuffedBySupport: number;
-  damageDealtBuffedBySupport: number;
-  damageDealtDebuffedBy: {[id:number]: number};
-  damageDealtBuffedBy: {[id:number]: number};
+
+export type Damage = {
+  dps: number,
+  crit?: number,
+  front?: number,
+  back?: number
+  buffedBySupport?: number
+  debuffedBySupport?: number
 }
-export interface HitSummary {
-  casts: number;
-  total: number;
-  crit: number;
-  backAttack: number;
-  frontAttack: number;
-  counter: number;
-  hitsDebuffedBySupport: number;
-  hitsBuffedBySupport: number;
+
+export type SkillDamage = {
+  [id: string]: Damage
+} & {
+  total?: Damage
+}
+export type EntityDamage = {
+  out?:SkillDamage
+  in?:SkillDamage
+
+}
+export type TargetDamage = {
+  [id: string]: EntityDamage
+} & {
+  totalOut?: Damage
+  totalIn?: Damage
+}
+export type EncounterDamage = {
+  [id:string]:TargetDamage
+}
+
+  // damageDealtDebuffedBy: {[id:number]: number};
+  // damageDealtBuffedBy: {[id:number]: number};
+
+export interface Zone {
+  id: string
+  name: string
+  image?: string
+  enemies: number[]
+}
+
+export interface Enemy {
+  id: string
+  npcId: number
+  name: string
+  deaths: number
+  isDead: boolean
 }
 export interface Player {
+  id: string
   name: string
   class: string
   classId: number
   gearScore: number
-}
-export interface SkillBreakdown {
-  timestamp: number;
-  damage: number;
-  targetEntity: string;
-  isCrit: boolean;
-  isBackAttack: boolean;
-  isFrontAttack: boolean;
-  isBuffedBySupport: boolean;
-  isDebuffedBySupport: boolean;
-
-}
-export interface PlayerSkill {
-  [id: number]: {
-    name: string
-    damage: DamageSummary,
-    hits: HitSummary,
-    breakdown?: SkillBreakdown[]
-  }
-}
-export interface PlayerState {
-  damage: DamageSummary
-  hits: HitSummary,
 
   deaths: number
   isDead: boolean
-  deathTime: number
+}
 
-  skills: PlayerSkill
-}
-export enum StatusEffectTarget {
-  OTHER,
-  PARTY,
-  SELF,
-}
-export interface StatusEffect {
-  target: StatusEffectTarget;
-  category: "buff" | "debuff";
-  buffcategory: string; //buffshowprioritycategory
-  bufftype: number;
-  uniquegroup: number;
-
-}
 export interface Encounter {
   id: string
-  encounterName: string
-  encounterImage?: string
+  zone?: Zone
+
   startingMs: number
   durationMs: number
   wipe: boolean
-  encounterBars: number
 
   players: Player[]
+  enemies: Enemy[]
 
-  debuffs: {[id: number]: StatusEffect};
-  buffs: {[id: number]: StatusEffect};
-  damage: DamageSummary
-  hits: HitSummary
+  damage: EncounterDamage
 
-  playerState: {
-    [name: string]: PlayerState
-  }
 }
