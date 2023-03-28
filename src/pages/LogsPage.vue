@@ -54,26 +54,14 @@
             unelevated
             color="primary"
             label="BACK"
-            @click="changeLogViewerStoreState('viewing-session')"
+            @click="changeLogViewerStoreState('none')"
           />
 
           <q-select
             v-if="logViewerStore.viewerState === 'none'"
             filled
-            v-model="logViewerStore.logfileFilter"
-            @update:model-value="computedLogFileList()"
-            multiple
-            clearable
-            :options="logViewerStore.encounterOptions"
-            label="Filter encounters"
-            style="width: 256px"
-          />
-
-          <q-select
-            v-if="logViewerStore.viewerState === 'viewing-session'"
-            filled
             v-model="logViewerStore.encounterFilter"
-            @update:model-value="calculateEncounterRows()"
+            @update:model-value="computedLogFileList()"
             multiple
             clearable
             :options="logViewerStore.encounterOptions"
@@ -131,19 +119,6 @@
         </div>
 
         <div v-if="logViewerStore.viewerState === 'none'">
-          <q-table
-            title="Sessions"
-            :rows="logViewerStore.computedSessions"
-            :columns="sessionColumns"
-            row-key="dateText"
-            dark
-            @row-click="onSessionRowClick"
-            :pagination="sessionPagination"
-            @update:pagination="onSessionPagination"
-          />
-        </div>
-
-        <div v-else-if="logViewerStore.viewerState === 'viewing-session'">
           <q-page-sticky
             position="bottom-left"
             :offset="[32, 32]"
@@ -177,7 +152,7 @@
                 millisToHourMinuteSeconds(encounter.startingMs) +
                 ' - ' +
                 millisToHourMinuteSeconds(
-                  encounter.startingMs + encounter.duration
+                  encounter.startingMs + encounter.durationMs
                 )
               "
             >
@@ -188,11 +163,11 @@
                 <div class="row no-wrap">
                   <q-card
                     v-for="(attempt, index) in encounter.attempts"
-                    :key="attempt.filename"
+                    :key="attempt.startingMs"
                     dark
                     class="my-card q-mr-md"
                     style="width: 256px"
-                    @click="onEncounterRowClick(attempt)"
+                    @click="onEncounterClick(attempt)"
                   >
                     <img v-if="encounter.image" :src="encounter.image" />
 
@@ -210,34 +185,35 @@
 
       <div
         v-if="
-          logViewerStore.viewerState === 'viewing-encounter' &&
-          logFile.viewingLogFile
+          logViewerStore.viewerState === 'viewing-encounter'
         "
         class="logs-page"
       >
-        <LogView ref="logView" :log-data="logFile.data" />
+        <LogView ref="logView" :log-data="logViewerStore.currentEncounter" />
       </div>
     </div>
   </q-scroll-area>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, onMounted } from "vue";
 import dayjs from "dayjs";
 import {
   millisToMinutesAndSeconds,
-  millisToHourMinuteSeconds,
+  millisToHourMinuteSeconds
 } from "src/util/number-helpers";
 
 import LogView from "src/components/LogView.vue";
 
 import { useSettingsStore } from "src/stores/settings";
-import { useLogViewerStore } from "src/stores/log-viewer";
+import { Encounter, useLogViewerStore } from "src/stores/log-viewer";
 import { sleep } from "src/util/sleep";
 
 import { encounters } from "src/constants/encounters";
 
 import relativeTime from "dayjs/plugin/relativeTime";
+import { ParserStatus } from "app/types";
+
 dayjs.extend(relativeTime);
 
 const settingsStore = useSettingsStore();
@@ -246,35 +222,13 @@ const logViewerStore = useLogViewerStore();
 const loaderImg = new URL("../assets/images/loader.gif", import.meta.url).href;
 
 const scrollArea = ref(null);
-function changeLogViewerStoreState(newState) {
+
+function changeLogViewerStoreState(newState: any) {
   logViewerStore.viewerState = newState;
   if (scrollArea.value) scrollArea.value.setScrollPosition("vertical", 0);
 }
 
-/* Start session table */
-const sessionColumns = [
-  {
-    name: "dateText",
-    field: "dateText",
-    align: "left",
-    label: "Session Date",
-    sortable: true,
-  },
-  {
-    name: "relativeTime",
-    field: "relativeTime",
-    align: "left",
-    label: "Relative Time",
-    sortable: false,
-  },
-  {
-    name: "totalDuration",
-    field: "totalDuration",
-    align: "right",
-    label: "Duration (H:M:S)",
-    sortable: true,
-  },
-];
+/*
 
 const sessionPagination = ref({
   sortBy: "desc",
@@ -286,208 +240,61 @@ const sessionPagination = ref({
 function onSessionPagination(newPagination) {
   sessionPagination.value = newPagination;
 }
+*/
 
-function onSessionRowClick(event, row) {
-  changeLogViewerStoreState("viewing-session");
-
-  logViewerStore.currentSessionName = row.filename;
-
-  logViewerStore.encounterOptions = [];
-  logViewerStore.encounterFilter = null;
-
-  row.sessionEncounters.forEach((encounter) => {
-    let encounterName = encounter.encounterName;
-    Object.values(encounters).forEach((encounter) => {
-      if (encounter.encounterNames.includes(encounterName)) {
-        encounterName = encounter.name;
-        return;
-      }
-    });
-
-    // Add encounter name to the encounter options list
-    if (!logViewerStore.encounterOptions.includes(encounterName)) {
-      logViewerStore.encounterOptions.push(encounterName);
-    }
-  });
-
-  logViewerStore.encounterOptions.sort();
-  calculateEncounterRows();
+type EncounterRow = Encounter & {
+  image: string
+  attempts: Encounter[]
 }
+const encounterRows = ref<EncounterRow[]>([]);
 
-function calculateEncounterRows() {
-  const rows = [];
-
-  logViewerStore.sessions.forEach((session) => {
-    if (session.filename === logViewerStore.currentSessionName) {
-      let startingMs = 0;
-
-      session.sessionEncounters.forEach((encounter) => {
-        startingMs += encounter.durationTs;
-
-        if (
-          encounter.durationTs <=
-          settingsStore.settings.logs.minimumEncounterDurationInMinutes *
-            60 *
-            1000
-        ) {
-          return;
-        }
-
-        let encounterName = encounter.encounterName;
-        let image = "";
-
-        Object.values(encounters).forEach((encounter) => {
-          if (encounter.encounterNames.includes(encounterName)) {
-            encounterName = encounter.name;
-            image = encounter.image;
-            return;
-          }
-        });
-
-        if (
-          logViewerStore.encounterFilter &&
-          Object.keys(logViewerStore.encounterFilter).length > 0 &&
-          !logViewerStore.encounterFilter.includes(encounterName) // not includes
-        ) {
-          return;
-        }
-
-        if (
-          rows.length > 0 &&
-          rows[rows.length - 1].encounterName === encounterName
-        ) {
-          rows[rows.length - 1].duration += encounter.durationTs;
-          rows[rows.length - 1].attempts.push(encounter);
-        } else {
-          rows.push({
-            encounterName,
-            image,
-            startingMs,
-            duration: encounter.durationTs,
-            attempts: [encounter],
-          });
-        }
-
-        /* if (
-          !logViewerStore.encounterFilter ||
-          (logViewerStore.encounterFilter &&
-            Object.keys(logViewerStore.encounterFilter).length === 0) ||
-          (logViewerStore.encounterFilter &&
-            Object.keys(logViewerStore.encounterFilter).length > 0 &&
-            logViewerStore.encounterFilter.includes(encounter.encounterName))
-        ) {
-          rows.push(encounter);
-        } */
-      });
-
-      encounterRows.value = rows;
-      return;
-    }
-  });
-}
-/* End session table */
-
-/* Start encounter table */
-const encounterRows = ref([]);
-
-function onEncounterRowClick(row) {
+function onEncounterClick(encounter: Encounter) {
   changeLogViewerStoreState("viewing-encounter");
 
-  logViewerStore.currentEncounterName = row.filename;
-
   window.messageApi.send("window-to-main", {
-    message: "get-parsed-log",
-    value: row.filename,
+    message: "get-encounter",
+    value: encounter.startingMs
   });
 }
+
 /* End session table */
 
-const logFile = reactive({
-  viewingLogFile: false,
-  data: {},
-});
 
-function calculateLogFileList(value) {
+function calculateEncounters(encounters: Encounter[]) {
   logViewerStore.resetState();
+  logViewerStore.encounters = encounters;
+  const rows: EncounterRow[] = [];
 
-  logViewerStore.encounterOptions = [];
-
-  value.forEach((val) => {
-    let totalDuration = 0;
-    let sessionEncounters = [];
-
-    val.parsedContents.encounters.forEach((val_encounter) => {
-      totalDuration += val_encounter.duration;
-
-      sessionEncounters.push({
-        filename: val_encounter.encounterFile,
-        encounterName: val_encounter.mostDamageTakenEntity.name,
-        durationTs: val_encounter.duration,
-        duration: millisToMinutesAndSeconds(val_encounter.duration),
-      });
-    });
-
-    sessionEncounters.forEach((encounter) => {
-      let encounterName = encounter.encounterName;
-
-      if (!logViewerStore.encounterOptions.includes(encounterName)) {
-        logViewerStore.encounterOptions.push(encounterName);
-      }
-    });
-
-    logViewerStore.encounterOptions.sort();
+  logViewerStore.encounters.forEach((encounter) => {
 
     if (
-      totalDuration >=
-      settingsStore.settings.logs.minimumSessionDurationInMinutes * 60 * 1000
+      encounter.durationMs <=
+      settingsStore.settings.logs.minimumEncounterDurationInMinutes *
+      60 *
+      1000
     ) {
-      logViewerStore.sessions.push({
-        filename: val.filename,
-        date: val.date,
-        dateText: dayjs(val.date).format("DD/MM/YYYY HH:mm:ss"),
-        relativeTime: dayjs(val.date).fromNow(),
-        totalDurationTs: totalDuration,
-        totalDuration: millisToHourMinuteSeconds(totalDuration),
-        sessionEncounters,
+      return;
+    }
+
+
+    // const {image} = Object.values(encounters).find((e) => e.encounterNames.includes(encounter.encounterName)) ?? {}
+    const image = "";
+    if (
+      rows.length > 0 &&
+      rows[rows.length - 1].encounterName === encounter.encounterName
+    ) {
+      rows[rows.length - 1].durationMs += encounter.durationMs;
+      rows[rows.length - 1].attempts.push(encounter);
+    } else {
+      rows.push({
+        ...encounter,
+        image,
+        attempts: [encounter]
       });
     }
   });
-
-  logViewerStore.sessions.reverse();
-  logViewerStore.computedSessions = JSON.parse(
-    JSON.stringify(logViewerStore.sessions)
-  );
-
-  logViewerStore.viewerState =
-    logViewerStore.sessions.length > 0 ? "none" : "no-data";
-}
-
-function computedLogFileList() {
-  if (
-    !logViewerStore.logfileFilter ||
-    Object.keys(logViewerStore.logfileFilter).length === 0
-  ) {
-    logViewerStore.computedSessions = logViewerStore.sessions;
-    return;
-  }
-
-  const filteredSessions = [];
-
-  logViewerStore.sessions.forEach((session) => {
-    const filteredEncounters = [];
-
-    session.sessionEncounters.forEach((encounter) => {
-      if (logViewerStore.logfileFilter.includes(encounter.encounterName)) {
-        filteredEncounters.push(encounter);
-      }
-    });
-
-    if (filteredEncounters.length > 0) {
-      filteredSessions.push(session);
-    }
-  });
-
-  logViewerStore.computedSessions = filteredSessions;
+  logViewerStore.viewerState = encounters.length > 0 ? "none" : "no-data";
+  encounterRows.value = rows;
 }
 
 function getLogfiles() {
@@ -495,7 +302,7 @@ function getLogfiles() {
 
   window.messageApi.send("window-to-main", {
     message: "parse-logs",
-    async: true,
+    async: true
   });
 }
 
@@ -504,47 +311,60 @@ function openLogDirectory() {
 }
 
 const isReceivingParserStatus = ref(false);
-const parserStatus = ref({
+const parserStatus = ref<ParserStatus>({
   completedJobs: 0,
-  totalJobs: 0,
+  totalJobs: 0
 });
 
 onMounted(() => {
   getLogfiles();
 
-  window.messageApi.receive("parsed-logs-list", (value) => {
+  window.messageApi.receive("encounters", (value) => {
+    console.log("encounters", value);
     isReceivingParserStatus.value = false;
     parserStatus.value = {
       completedJobs: 0,
-      totalJobs: 0,
+      totalJobs: 0
     };
 
-    calculateLogFileList(value);
+    calculateEncounters(value as Encounter[]);
   });
 
-  window.messageApi.receive("parsed-log", (value) => {
-    logFile.data = value;
-    logFile.viewingLogFile = true;
+  window.messageApi.receive("encounter", (value) => {
+    logViewerStore.currentEncounter = value as Encounter;
+
+  });
+
+  window.messageApi.receive("encounter-options", (value) => {
+    console.log("encounter-options", value);
+
+    logViewerStore.encounterOptions = value as string[];
+    logViewerStore.encounterOptions.sort();
   });
 
   window.messageApi.receive("log-parser-status", (value) => {
-    if (value.completedJobs && value.totalJobs) {
-      isReceivingParserStatus.value = true;
-      parserStatus.value = value;
+    const status = value as ParserStatus;
+    console.log("status", status);
+    isReceivingParserStatus.value = true;
+    parserStatus.value = status;
 
-      if (value.completedJobs === value.totalJobs) {
-        window.messageApi.send("window-to-main", {
-          message: "get-parsed-logs",
-          async: true,
-        });
-      }
+    if (status.completedJobs === status.totalJobs) {
+      // window.messageApi.send("window-to-main", {
+      //   message: "get-encounter-options",
+      //   async: true,
+      // });
+      window.messageApi.send("window-to-main", {
+        message: "get-encounters",
+        value: logViewerStore.encounterFilter,
+        async: true
+      });
     }
   });
 });
 
 async function wipeParsedLogs() {
   window.messageApi.send("window-to-main", {
-    message: "wipe-parsed-logs",
+    message: "wipe-parsed-logs"
   });
 
   await sleep(1000);
@@ -556,13 +376,16 @@ async function wipeParsedLogs() {
 .logs-page {
   padding: 16px 32px;
 }
+
 .spinner {
   width: 100%;
   height: calc(100vh - 128px);
 }
+
 .loader-img {
   width: 128px;
 }
+
 .logs-top-bar {
   align-items: center;
   justify-content: space-between;

@@ -41,6 +41,7 @@ import {
   updaterEventEmitter,
 } from "./util/updater";
 import { adminRelauncher, PktCaptureMode } from "meter-core/pkt-capture";
+import { createAceLogService } from "app/src-electron/log-parser/log-service";
 
 if (app.commandLine.hasSwitch("disable-hardware-acceleration")) {
   log.info("Hardware acceleration disabled");
@@ -55,6 +56,7 @@ console.info = log.info;
 // We keep log/debug for console only
 
 const store = new Store();
+const logService = createAceLogService()
 
 let prelauncherWindow: BrowserWindow | null,
   mainWindow: BrowserWindow | null,
@@ -304,15 +306,21 @@ const ipcFunctions: {
     event.reply("on-settings-change", appSettings);
   },
   "parse-logs": async (event) => {
-    await parseLogs(event, appSettings.logs.splitOnPhaseTransition, meterData);
+    await logService.parseLogs(event, appSettings.logs.splitOnPhaseTransition, meterData)
+    log.info("parse-logs done")
+    // await parseLogs(event, appSettings.logs.splitOnPhaseTransition, meterData);
   },
-  "get-parsed-logs": async (event) => {
-    const parsedLogs = await getParsedLogs();
-    await event.reply("parsed-logs-list", parsedLogs);
+  "get-encounter-options": async (event)=>{
+    const options = await logService.getEncounterOptions()
+    await event.reply("encounter-options", options)
   },
-  "get-parsed-log": async (event, arg) => {
+  "get-encounters": async (event, arg) => {
+    const encounters = await logService.getEncounters(arg as string|null);
+    await event.reply("encounters", encounters);
+  },
+  "get-encounter": async (event, arg) => {
     const logData = await getLogData(arg.value);
-    await event.reply("parsed-log", logData);
+    await event.reply("encounter", logData);
   },
   "wipe-parsed-logs": async () => {
     await wipeParsedLogs();

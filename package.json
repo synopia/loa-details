@@ -24,7 +24,8 @@
     "lodash": "^4.17.21",
     "meter-core": "github:lost-ark-dev/meter-core",
     "platform-folders": "^0.6.0",
-    "worker-farm": "^1.7.0"
+    "worker-farm": "^1.7.0",
+    "acebase": "^1.27.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.2.10",
