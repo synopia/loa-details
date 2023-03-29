@@ -315,7 +315,7 @@ const ipcFunctions: {
     await event.reply("encounter-options", options)
   },
   "get-encounters": async (event, arg) => {
-    const encounters = await logService.getEncounters(arg as string|null);
+    const encounters = await logService.getEncounters(JSON.parse(arg.value));
     await event.reply("encounters", encounters);
   },
   "get-encounter": async (event, arg) => {

@@ -60,11 +60,11 @@
           <q-select
             v-if="logViewerStore.viewerState === 'none'"
             filled
-            v-model="logViewerStore.encounterFilter"
+            v-model="encounterFilter"
             @update:model-value="computedLogFileList()"
             multiple
             clearable
-            :options="logViewerStore.encounterOptions"
+            :options="encounterOptions"
             label="Filter encounters"
             style="width: 256px"
           />
@@ -133,32 +133,34 @@
           </q-page-sticky>
           <q-timeline dark color="secondary">
             <q-timeline-entry
-              v-if="encounterRows.length === 0"
+              v-if="logViewerStore.encounterRows.length === 0"
               style="font-size: 24px; font-family: 'questrial'"
             >
               No encounter found based on filter and options.
             </q-timeline-entry>
-
+            <q-infinite-scroll @load="onLoad" :offset="250">
             <q-timeline-entry
-              v-for="encounter in encounterRows"
-              :key="encounter.zone?.name"
+              v-for="encounterRow in logViewerStore.encounterRows"
+              :key="encounterRow.index"
               :title="
-                encounter.zone?.name +
+                encounterRow.raid +
                 ' | ' +
-                encounter.attempts.length +
+                encounterRow.attempts.length +
                 ' attempt(s)'
               "
               :subtitle="
-                millisToHourMinuteSeconds(encounter.startingMs) +
+                new Date(encounterRow.startingMs).toISOString()+
+                // millisToHourMinuteSeconds(encounterRow.startingMs) +
                 ' - ' +
-                millisToHourMinuteSeconds(
-                  encounter.startingMs + encounter.durationMs
-                )
+                new Date(encounterRow.startingMs+encounterRow.durationMs).toISOString()
+                // millisToHourMinuteSeconds(
+                //   encounterRow.startingMs + encounterRow.durationMs
+                // )
               "
             >
               <q-scroll-area
                 style="width: calc(100vw - 96px - 12px)"
-                :style="{ height: encounter.image ? '272px' : '96px' }"
+                :style="{ height: '272px' }"
               >
                 <div class="row no-wrap">
                   <q-card
@@ -166,14 +168,14 @@
                     class="my-card q-mr-md"
                     style="width: 256px"
                   >
-                    <img v-if="encounter.image" :src="encounter.image" />
+                    <img v-if="encounterRow.image" :src="encounterRow.image" />
 
                     <q-card-section>
                       <div class="text-subtitle2">DPS</div>
                     </q-card-section>
                   </q-card>
                   <q-card
-                    v-for="(attempt, index) in encounter.attempts"
+                    v-for="(attempt, index) in encounterRow.attempts"
                     :key="attempt.startingMs"
                     dark
                     class="my-card q-mr-md"
@@ -188,6 +190,12 @@
                 </div>
               </q-scroll-area>
             </q-timeline-entry>
+              <template v-slot:loading>
+                <div class="row justify-center q-my-md">
+                  <q-spinner-dots color="primary" size="40px" />
+                </div>
+              </template>
+            </q-infinite-scroll>
           </q-timeline>
         </div>
       </div>
@@ -222,7 +230,7 @@ import { sleep } from "src/util/sleep";
 import { encounters } from "src/constants/encounters";
 
 import relativeTime from "dayjs/plugin/relativeTime";
-import { ParserStatus } from "app/types";
+import { EncounterSession, ParserStatus } from "app/types";
 
 dayjs.extend(relativeTime);
 
@@ -242,26 +250,6 @@ function abbrNumber(v) {
   return `${a[0]}${a[1]}`
 }
 
-/*
-
-const sessionPagination = ref({
-  sortBy: "desc",
-  descending: false,
-  page: 1,
-  rowsPerPage: 5,
-});
-
-function onSessionPagination(newPagination) {
-  sessionPagination.value = newPagination;
-}
-*/
-
-type EncounterRow = Encounter & {
-  image: string
-  attempts: Encounter[]
-}
-const encounterRows = ref<EncounterRow[]>([]);
-
 function onEncounterClick(encounter: Encounter) {
   changeLogViewerStoreState("viewing-encounter");
 
@@ -271,47 +259,19 @@ function onEncounterClick(encounter: Encounter) {
   });
 }
 
-/* End session table */
-
-
-function calculateEncounters(encounters: Encounter[]) {
+function calculateEncounters(session: EncounterSession) {
   logViewerStore.resetState();
-  logViewerStore.encounters = encounters;
-  const rows: EncounterRow[] = [];
-
-  logViewerStore.encounters.forEach((encounter) => {
-
-    // if (
-    //   encounter.durationMs <=
-    //   settingsStore.settings.logs.minimumEncounterDurationInMinutes *
-    //   60 *
-    //   1000
-    // ) {
-    //   return;
-    // }
-
-    const players = Array.from(encounter.players).sort((a,b)=>a.name.localeCompare(b.name))
-
-    // const {image} = Object.values(encounters).find((e) => e.encounterNames.includes(encounter.encounterName)) ?? {}
-    const image = new URL('../assets/images/encounters/'+encounter.zone?.image, import.meta.url).href
-    if (
-      rows.length > 0 &&
-      rows[rows.length - 1].zone?.id === encounter.zone?.id &&
-      rows[rows.length - 1].players.every((v,i)=>v.name===players[i]?.name)
-    ) {
-      rows[rows.length - 1].durationMs += encounter.durationMs;
-      rows[rows.length - 1].attempts.push(encounter);
-    } else {
-      rows.push({
-        ...encounter,
-        players,
-        image,
-        attempts: [encounter]
-      });
+  const rows = session.rows.map(row=>{
+    return {
+      ...row,
+      image: new URL('../assets/images/encounters/'+row.raid+'.png', import.meta.url).href
     }
   });
-  logViewerStore.viewerState = encounters.length > 0 ? "none" : "no-data";
-  encounterRows.value = rows;
+
+  logViewerStore.encounterRows = rows
+  logViewerStore.viewerState = rows.length > 0 ? "none" : "no-data";
+  logViewerStore.next = session.next
+  logViewerStore.lastFetched = rows.length
 }
 
 function getLogfiles() {
@@ -326,53 +286,81 @@ function getLogfiles() {
 function openLogDirectory() {
   window.messageApi.send("window-to-main", { message: "open-log-directory" });
 }
-
 const isReceivingParserStatus = ref(false);
+const encounterFilter = ref<string[]|null>(null)
+const encounterOptions = ref<string[]|null>(null)
 const parserStatus = ref<ParserStatus>({
   completedJobs: 0,
   totalJobs: 0
 });
+let doneLoading : (()=>void)|undefined = undefined
+function onLoad(index:number, done:()=>void) {
+  const value = encounterFilter.value ?? []
+  console.log(logViewerStore.lastFetched)
+  if( logViewerStore.lastFetched===5) {
+    doneLoading = done
 
+    window.messageApi.send("window-to-main", {
+      message: "get-encounters",
+      value: JSON.stringify({ zones: value, start: logViewerStore.next }),
+      async: true
+    });
+  }
+}
+function computedLogFileList(){
+  const value = encounterFilter.value ?? []
+  window.messageApi.send("window-to-main", {
+    message: "get-encounters",
+    value: JSON.stringify({zones: value}),
+    async: true
+  });
+}
 onMounted(() => {
   getLogfiles();
 
   window.messageApi.receive("encounters", (value) => {
-    console.log("encounters", value);
-    isReceivingParserStatus.value = false;
-    parserStatus.value = {
-      completedJobs: 0,
-      totalJobs: 0
-    };
+    const session = value as EncounterSession
+    if( !doneLoading ) {
+      isReceivingParserStatus.value = false;
+      parserStatus.value = {
+        completedJobs: 0,
+        totalJobs: 0
+      };
 
-    calculateEncounters(value as Encounter[]);
+      calculateEncounters(session);
+    } else {
+      logViewerStore.next = session.next
+      logViewerStore.lastFetched = session.rows.length
+      logViewerStore.encounterRows.push(...session.rows)
+      doneLoading()
+      doneLoading = undefined
+    }
   });
 
   window.messageApi.receive("encounter", (value) => {
     logViewerStore.currentEncounter = value as Encounter;
-
   });
 
   window.messageApi.receive("encounter-options", (value) => {
-    console.log("encounter-options", value);
-
-    logViewerStore.encounterOptions = value as string[];
-    logViewerStore.encounterOptions.sort();
+    encounterFilter.value = []
+    encounterOptions.value = value as string[]
+    encounterOptions.value.sort();
   });
 
   window.messageApi.receive("log-parser-status", (value) => {
     const status = value as ParserStatus;
-    console.log("status", status);
     isReceivingParserStatus.value = true;
     parserStatus.value = status;
 
     if (status.completedJobs === status.totalJobs) {
-      // window.messageApi.send("window-to-main", {
-      //   message: "get-encounter-options",
-      //   async: true,
-      // });
+      window.messageApi.send("window-to-main", {
+        message: "get-encounter-options",
+        async: true,
+      });
+      const value = encounterFilter.value ?? []
       window.messageApi.send("window-to-main", {
         message: "get-encounters",
-        value: logViewerStore.encounterFilter,
+        value: JSON.stringify({zones: value}),
         async: true
       });
     }

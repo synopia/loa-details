@@ -50,8 +50,10 @@ export interface ParserStatus {
   totalJobs: number
 }
 
+
 export type Damage = {
   dps: number,
+  stagger?: number,
   crit?: number,
   front?: number,
   back?: number
@@ -77,16 +79,19 @@ export type TargetDamage = {
 }
 export type EncounterDamage = {
   [id:string]:TargetDamage
+}& {
+  totalOut?: Damage
+  totalIn?: Damage
 }
 
-  // damageDealtDebuffedBy: {[id:number]: number};
-  // damageDealtBuffedBy: {[id:number]: number};
+// damageDealtDebuffedBy: {[id:number]: number};
+// damageDealtBuffedBy: {[id:number]: number};
 
 export interface Zone {
-  id: string
   name: string
   image?: string
   enemies: number[]
+  finished?: (deadIds: Map<number|string,number>)=>boolean
 }
 
 export interface Enemy {
@@ -95,6 +100,12 @@ export interface Enemy {
   name: string
   deaths: number
   isDead: boolean
+  currentHp: number
+  maxHp: number
+  damageDealt: number
+  damageTaken: number
+  staggerDealt: number
+  staggerTaken: number
 }
 export interface Player {
   id: string
@@ -105,11 +116,19 @@ export interface Player {
 
   deaths: number
   isDead: boolean
+  currentHp: number
+  maxHp: number
+  damageDealt: number
+  damageTaken: number
+  staggerDealt: number
+  staggerTaken: number
+
 }
 
 export interface Encounter {
   id: string
-  zone?: Zone
+  zone: string
+  finished: boolean
 
   startingMs: number
   durationMs: number
@@ -119,5 +138,24 @@ export interface Encounter {
   enemies: Enemy[]
 
   damage: EncounterDamage
+}
+export interface EncounterFilter {
+  zones?: string[]
+  limit?: number
+  start?: number
+}
+export interface EncounterRow {
+  index: number
+  raid: string
+  players: Player[]
+  finished: boolean
+  startingMs: number
+  durationMs: number
+  image: string
 
+  attempts: Encounter[]
+}
+export interface EncounterSession {
+  next: number
+  rows: EncounterRow[]
 }
